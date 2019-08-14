@@ -98,7 +98,7 @@ def choose_planet(
         try:
             planet_list.remove("umbriel")
             planet_list.remove("earth")
-        except KeyError:
+        except ValueError:
             pass
 
         # choose a planet from those left in the list
@@ -172,7 +172,7 @@ def sell_cargo(current_id, current_hold):
         if amount:
             requests.post(
                 web_base.format(action="trade"),
-                data={
+                json={
                     "gameId": current_id,
                     "transaction": {"side": "sell", cargo_type: amount},
                 },
@@ -290,7 +290,7 @@ def try_buy_bays(current_id, current_credits, current_cargo_bays):
 
     transaction_status_code = requests.post(
         web_base.format(action="shipyard"),
-        data={"gameId": current_id, "transaction": {"side": "buy", "qty": bays_to_buy}},
+        json={"gameId": current_id, "transaction": {"side": "buy", "qty": bays_to_buy}},
     ).status_code
 
     if transaction_status_code == 200:
@@ -299,32 +299,53 @@ def try_buy_bays(current_id, current_credits, current_cargo_bays):
         return "Shipyard transaction error"
 
 
-def try_buy_cargo(current_id, chosen_cargo, current_market, current_credits):
+def try_buy_cargo(
+    current_id,
+    chosen_cargo,
+    current_market,
+    current_credits,
+    current_bays_used,
+    current_cargo_bays,
+):
     """
     Attempts to purchase given cargo
     :param current_id: a string holding the current game id
     :param chosen_cargo: cargo to buy
     :param current_market: dictionary of cargo:price keys and values
     :param current_credits: amount of available credits
+    :param current_bays_used: number of cargo bays in use
+    :param current_cargo_bays: number of cargo bays acquired
     :return: string indicating result of transaction
     """
-    cargo_amount = current_credits // current_market[chosen_cargo]
-    print(f"buying {chosen_cargo}. Credits: {current_credits}")
+    potential_cargo_amount = current_credits // current_market[chosen_cargo]
+    bays_available = current_cargo_bays - current_bays_used
 
-    transaction_status_code = requests.post(
+    cargo_amount = (
+        potential_cargo_amount
+        if potential_cargo_amount <= bays_available
+        else bays_available
+    )
+
+    buy_transaction = requests.post(
         web_base.format(action="trade"),
-        data={
+        json={
             "gameId": current_id,
             "transaction": {"side": "buy", chosen_cargo: cargo_amount},
         },
     )
 
-    print(f"json: {transaction_status_code.json()}")
-
-    if transaction_status_code.status_code == 200:
+    if buy_transaction.status_code == 200:
         return f"Purchased {cargo_amount} {chosen_cargo} at {current_market[chosen_cargo]} credits each"
     else:
-        return f"Buy cargo error"
+        return f"""
+        Buy cargo error:\n
+        id: {current_id}\n
+        cargo: {chosen_cargo}\n
+        market: {current_market}\n
+        credits: {current_credits}\n
+        amount: {cargo_amount}\n
+        bays used: {current_bays_used}\n
+        bays acquired: {current_cargo_bays}"""
 
 
 def try_buy_fuel_cells(current_id):
@@ -335,7 +356,7 @@ def try_buy_fuel_cells(current_id):
     """
     transaction_status_code = requests.post(
         web_base.format(action="fueldepot"),
-        data={"gameId": current_id, "transaction": {"side": "buy", "qty": 5}},
+        json={"gameId": current_id, "transaction": {"side": "buy", "qty": 5}},
     ).status_code
 
     if transaction_status_code == 200:
@@ -355,16 +376,16 @@ def try_repay_loan(current_id, current_credits, current_loan):
     # TODO: consider a smarter way to repay loanshark
     repay_amount = current_credits if current_loan > current_credits else current_loan
 
-    transaction_status_code = requests.post(
+    loan_transaction = requests.post(
         web_base.format(action="loanshark"),
-        data={
+        json={
             "gameId": current_id,
-            "transaction": {"side": "borrow", "qty": repay_amount},
+            "transaction": {"side": "repay", "qty": repay_amount},
         },
-    ).status_code
+    )
 
-    if transaction_status_code == 200:
-        return f"Paid {repay_amount} to the loanshark"
+    if loan_transaction.status_code == 200:
+        return f"Paid {repay_amount} to the loanshark. Still owe {loan_transaction.json()['gameState']['loanBalance']}."
     else:
         return "Loanshark error"
 
@@ -374,19 +395,17 @@ def try_travel(current_id, chosen_planet):
     Attempt to travel to planet passed in
     :param current_id: a string holding the current game id
     :param chosen_planet: planet to travel to
-    :return: string indicating result of request
+    :return: json object of game data if transaction was a success, else print error message
     """
-    transaction_status_code = requests.post(
+    travel_transaction = requests.post(
         web_base.format(action="travel"),
-        data={"gameId": current_id, "toPlanet": chosen_planet},
-    ).status_code
+        json={"gameId": current_id, "toPlanet": chosen_planet},
+    )
 
-    print(f"code: {transaction_status_code}")
-
-    if transaction_status_code == 200:
-        return f"**** Traveled to {chosen_planet} ****"
+    if travel_transaction.status_code == 200:
+        return travel_transaction.json()
     else:
-        return "Travel error!"
+        print("**** Travel error! ****")
 
 
 # endregion
@@ -399,7 +418,6 @@ while not end_play:
     # get game id
     game_id = game["gameId"]
     while not game_over:
-        print("Starting turn")
         transactions = []
 
         # parse game data
@@ -412,6 +430,7 @@ while not end_play:
 
         # sell all cargo
         sell_cargo(game_id, game["gameState"]["currentHold"])
+        transactions.append("Selling all cargo")
 
         # update credits
         game_credits = get_game_variable(game_id, "credits")
@@ -431,8 +450,17 @@ while not end_play:
         # buy cargo
         cargo_to_buy = should_buy_cargo(market, game_credits)
         if cargo_to_buy:
+            cargo_bays_used = get_game_variable(game_id, "usedBays")
+            cargo_bays = get_game_variable(game_id, "totalBays")
             transactions.append(
-                try_buy_cargo(game_id, cargo_to_buy, market, game_credits)
+                try_buy_cargo(
+                    game_id,
+                    cargo_to_buy,
+                    market,
+                    game_credits,
+                    cargo_bays_used,
+                    cargo_bays,
+                )
             )
             hold = get_game_variable(game_id, "currentHold")
 
@@ -444,7 +472,30 @@ while not end_play:
             turns_left, cargo_to_buy, game_credits
         ):
             transactions.append(try_buy_bays(game_id, game_credits, cargo_bays))
+
+            # update credits
+            game_credits = get_game_variable(game_id, "credits")
+
+            # bought more bays, try to buy cargo again
             cargo_bays = get_game_variable(game_id, "totalBays")
+            cargo_to_buy = should_buy_cargo(market, game_credits)
+            if cargo_to_buy:
+                cargo_bays_used = get_game_variable(game_id, "usedBays")
+                cargo_bays = get_game_variable(game_id, "totalBays")
+                transactions.append(
+                    try_buy_cargo(
+                        game_id,
+                        cargo_to_buy,
+                        market,
+                        game_credits,
+                        cargo_bays_used,
+                        cargo_bays,
+                    )
+                )
+                hold = get_game_variable(game_id, "currentHold")
+
+        # update credits
+        game_credits = get_game_variable(game_id, "credits")
 
         # print data
         print("\nPlanet: ", planet)
@@ -464,19 +515,19 @@ while not end_play:
         if turns_left > 1:
             # travel
             travel_planet = choose_planet(planet, hold, loan, turns_left, cargo_bays)
-            print(try_travel(game_id, travel_planet))
+            game = try_travel(game_id, travel_planet)
         else:
             # endgame
             sell_cargo(game_id, game["gameState"]["currentHold"])
 
-            high_score_code = requests.post(
-                "https://skysmuggler.com/scores/submit", data={"gameId": game_id}
-            ).status_code
+            score = requests.post(
+                "https://skysmuggler.com/scores/submit", json={"gameId": game_id}
+            )
 
-            if high_score_code == 200:
+            if score.status_code == 200 and "New" in score.json()["message"]:
                 requests.post(
                     "https://skysmuggler.com/scores/update_name",
-                    data={"newName": "El Capitan", "gameId": game_id},
+                    json={"newName": "El Capitan", "gameId": game_id},
                 )
                 print("***** High score achieved *****")
             else:
