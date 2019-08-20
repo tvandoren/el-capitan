@@ -1,6 +1,5 @@
 import random
 import requests
-import time
 
 # region setup
 
@@ -488,7 +487,6 @@ def try_travel(current_id, chosen_planet):
 # region play
 while not end_play:
     print(f"Starting game {game_count + 1}")
-    start_time = time.time()
     # start new game and get json object
     game = requests.get(web_base.format(action="new_game")).json()
     # get game id
@@ -606,7 +604,7 @@ while not end_play:
                 f"Sold cargo for a total of {sell_profit}\nFinal score: {final_score}"
             )
 
-            data_file.write(f"{time.time() - start_time}\n")
+            data_file.write(f"{final_score}\n")
 
             score = requests.post(
                 "https://skysmuggler.com/scores/submit", json={"gameId": game_id}
