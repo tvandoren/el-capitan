@@ -1,5 +1,6 @@
 import random
 import requests
+import time
 
 # region setup
 
@@ -31,6 +32,9 @@ game_over = False
 
 # number of games played
 game_count = 0
+
+# data file
+data_file = open("data.txt", "a")
 
 # endregion
 
@@ -108,40 +112,33 @@ def choose_planet(
     return chosen_planet
 
 
-def get_game_variable(current_id, requested_variable):
-    """
-    Pulls credit data from server
-    :param current_id: a string holding the current game id
-    :param requested_variable: a string holding the gamestate variable desired
-    :return: current game credits
-    """
-    return requests.get(
-        web_base.format(action="game_state"), params={"gameId": current_id}
-    ).json()["gameState"][requested_variable]
-
-
 def get_game_data(game_object):
     """
     Parses game state data into variables from json object
     :param game_object: a json object with game state data
-    :return: tuple of current (planet, turns left, market, hold, fuel purchases, loan, cargo bays)
+    :return: tuple of current (planet, credits, turns left, market, hold,
+    fuel purchases, loan, cargo bays, cargo bays used)
     """
     current_planet = game_object["gameState"]["planet"]
+    current_credits = game_object["gameState"]["credits"]
     current_turns_left = game_object["gameState"]["turnsLeft"]
     current_market = game_object["currentMarket"]
     current_hold = game_object["gameState"]["currentHold"]
     current_fuel_purchases = game_object["gameState"]["fuelPurchases"]
     current_loan = game_object["gameState"]["loanBalance"]
     current_cargo_bays = game_object["gameState"]["totalBays"]
+    current_cargo_bays_used = game_object["gameState"]["usedBays"]
 
     return (
         current_planet,
+        current_credits,
         current_turns_left,
         current_market,
         current_hold,
         current_fuel_purchases,
         current_loan,
         current_cargo_bays,
+        current_cargo_bays_used,
     )
 
 
@@ -160,13 +157,15 @@ def is_low_market_event(current_market):
     return ""
 
 
-def sell_cargo(current_id, current_hold):
+def sell_cargo(current_id, current_hold, current_market):
     """
     Sells all cargo in hold
     :param current_id: a string holding the current game id
     :param current_hold: dictionary of cargo:quantity keys and values
-    :return: dictionary of cargo:total_profit keys and values
+    :param current_market: dictionary of cargo:price keys and values
+    :return: total profit from selling cargo
     """
+    current_profit = 0
 
     for cargo_type, amount in current_hold.items():
         if amount:
@@ -177,6 +176,10 @@ def sell_cargo(current_id, current_hold):
                     "transaction": {"side": "sell", cargo_type: amount},
                 },
             )
+
+            current_profit += amount * current_market[cargo_type]
+
+    return current_profit
 
 
 def should_buy_bays(current_turns_left, did_buy, current_credits):
@@ -276,7 +279,7 @@ def try_buy_bays(current_id, current_credits, current_cargo_bays):
     :param current_id: a string holding the current game id
     :param current_credits: amount of available credits
     :param current_cargo_bays: number of cargo bays acquired
-    :return: string indicating result of transaction
+    :return: tuple of credits, cargo bays, used bays, and bays bought
     """
     cargo_bay_cost = 800
 
@@ -288,15 +291,45 @@ def try_buy_bays(current_id, current_credits, current_cargo_bays):
         else 1000 - current_cargo_bays
     )
 
-    transaction_status_code = requests.post(
+    buy_transaction = requests.post(
         web_base.format(action="shipyard"),
         json={"gameId": current_id, "transaction": {"side": "buy", "qty": bays_to_buy}},
-    ).status_code
+    )
 
-    if transaction_status_code == 200:
-        return f"Purchased {bays_to_buy} bays"
+    if buy_transaction.status_code == 200:
+        return (
+            buy_transaction.json()["gameState"]["credits"],
+            buy_transaction.json()["gameState"]["totalBays"],
+            buy_transaction.json()["gameState"]["usedBays"],
+            bays_to_buy,
+        )
     else:
-        return "Shipyard transaction error"
+        error_state = requests.get(
+            web_base.format(action="game_state"), params={"gameId": current_id}
+        ).json()
+        print(
+            f"""**** Buy bays error! ****
+            Tried to buy {bays_to_buy} bays
+        **** GAME ****
+        planet: {error_state["gameState"]["planet"]}
+        credits: {error_state["gameState"]["credits"]}
+        usedBays: {error_state["gameState"]["usedBays"]}
+        totalBays: {error_state["gameState"]["totalBays"]}
+        **** HOLD ****
+        narcotics: {error_state["gameState"]["currentHold"]["narcotics"]}
+        mining: {error_state["gameState"]["currentHold"]["mining"]}
+        medical: {error_state["gameState"]["currentHold"]["medical"]}
+        metal: {error_state["gameState"]["currentHold"]["metal"]}
+        weapons: {error_state["gameState"]["currentHold"]["weapons"]}
+        water: {error_state["gameState"]["currentHold"]["water"]}
+        """
+        )
+        return (
+            error_state["gameState"]["credits"],
+            error_state["gameState"]["totalBays"],
+            error_state["gameState"]["usedBays"],
+            0,
+        )
 
 
 def try_buy_cargo(
@@ -315,7 +348,7 @@ def try_buy_cargo(
     :param current_credits: amount of available credits
     :param current_bays_used: number of cargo bays in use
     :param current_cargo_bays: number of cargo bays acquired
-    :return: string indicating result of transaction
+    :return: tuple of game credits, hold, and amount of cargo bought
     """
     potential_cargo_amount = current_credits // current_market[chosen_cargo]
     bays_available = current_cargo_bays - current_bays_used
@@ -335,34 +368,55 @@ def try_buy_cargo(
     )
 
     if buy_transaction.status_code == 200:
-        return f"Purchased {cargo_amount} {chosen_cargo} at {current_market[chosen_cargo]} credits each"
+        return (
+            buy_transaction.json()["gameState"]["credits"],
+            buy_transaction.json()["gameState"]["currentHold"],
+            cargo_amount,
+        )
     else:
-        return f"""
-        Buy cargo error:\n
-        id: {current_id}\n
-        cargo: {chosen_cargo}\n
-        market: {current_market}\n
-        credits: {current_credits}\n
-        amount: {cargo_amount}\n
-        bays used: {current_bays_used}\n
-        bays acquired: {current_cargo_bays}"""
+        error_state = requests.get(
+            web_base.format(action="game_state"), params={"gameId": current_id}
+        ).json()
+        print(
+            f"""**** Buy cargo error! ****
+        Tried to buy {cargo_amount} {chosen_cargo} at {current_market[chosen_cargo]}
+        **** GAME ****
+        planet: {error_state["gameState"]["planet"]}
+        credits: {error_state["gameState"]["credits"]}
+        usedBays: {error_state["gameState"]["usedBays"]}
+        totalBays: {error_state["gameState"]["totalBays"]}
+        **** HOLD ****
+        narcotics: {error_state["gameState"]["currentHold"]["narcotics"]}
+        mining: {error_state["gameState"]["currentHold"]["mining"]}
+        medical: {error_state["gameState"]["currentHold"]["medical"]}
+        metal: {error_state["gameState"]["currentHold"]["metal"]}
+        weapons: {error_state["gameState"]["currentHold"]["weapons"]}
+        water: {error_state["gameState"]["currentHold"]["water"]}
+        """
+        )
+        return (
+            error_state["gameState"]["credits"],
+            error_state["gameState"]["currentHold"],
+            0,
+        )
 
 
-def try_buy_fuel_cells(current_id):
+def try_buy_fuel_cells(current_id, current_credits):
     """
     Attempts to purchase fuel cells
     :param current_id: a string holding the current game id
-    :return: string indicating result of transaction
+    :param current_credits: amount of available credits
+    :return: tuple of transaction success and game credits
     """
-    transaction_status_code = requests.post(
+    buy_transaction = requests.post(
         web_base.format(action="fueldepot"),
         json={"gameId": current_id, "transaction": {"side": "buy", "qty": 5}},
-    ).status_code
+    )
 
-    if transaction_status_code == 200:
-        return "Purchased 5 more turns"
+    if buy_transaction.status_code == 200:
+        return True, buy_transaction.json()["gameState"]["credits"]
     else:
-        return "Unable to purchase turns"
+        return False, current_credits
 
 
 def try_repay_loan(current_id, current_credits, current_loan):
@@ -371,7 +425,7 @@ def try_repay_loan(current_id, current_credits, current_loan):
     :param current_id: a string holding the current game id
     :param current_credits: amount of available credits
     :param current_loan: number of credits owed to the loanshark
-    :return: string indicating result of transaction
+    :return: tuple of game credits and outstanding loan amount
     """
     # TODO: consider a smarter way to repay loanshark
     repay_amount = current_credits if current_loan > current_credits else current_loan
@@ -384,10 +438,10 @@ def try_repay_loan(current_id, current_credits, current_loan):
         },
     )
 
-    if loan_transaction.status_code == 200:
-        return f"Paid {repay_amount} to the loanshark. Still owe {loan_transaction.json()['gameState']['loanBalance']}."
-    else:
-        return "Loanshark error"
+    return (
+        loan_transaction.json()["gameState"]["credits"],
+        loan_transaction.json()["gameState"]["loanBalance"],
+    )
 
 
 def try_travel(current_id, chosen_planet):
@@ -395,7 +449,8 @@ def try_travel(current_id, chosen_planet):
     Attempt to travel to planet passed in
     :param current_id: a string holding the current game id
     :param chosen_planet: planet to travel to
-    :return: json object of game data if transaction was a success, else print error message
+    :return: json object of game data if transaction was a success, else print
+    error message and return None
     """
     travel_transaction = requests.post(
         web_base.format(action="travel"),
@@ -405,56 +460,106 @@ def try_travel(current_id, chosen_planet):
     if travel_transaction.status_code == 200:
         return travel_transaction.json()
     else:
-        print("**** Travel error! ****")
+        error_state = requests.get(
+            web_base.format(action="game_state"), params={"gameId": current_id}
+        ).json()
+        print(
+            f"""**** Travel error! ****
+        Tried to travel to {chosen_planet}
+        **** GAME ****
+        planet: {error_state["gameState"]["planet"]}
+        credits: {error_state["gameState"]["credits"]}
+        usedBays: {error_state["gameState"]["usedBays"]}
+        totalBays: {error_state["gameState"]["totalBays"]}
+        **** HOLD ****
+        narcotics: {error_state["gameState"]["currentHold"]["narcotics"]}
+        mining: {error_state["gameState"]["currentHold"]["mining"]}
+        medical: {error_state["gameState"]["currentHold"]["medical"]}
+        metal: {error_state["gameState"]["currentHold"]["metal"]}
+        weapons: {error_state["gameState"]["currentHold"]["weapons"]}
+        water: {error_state["gameState"]["currentHold"]["water"]}
+        """
+        )
+        return None
 
 
 # endregion
 
 # region play
 while not end_play:
-    print("Starting game")
+    print(f"Starting game {game_count + 1}")
+    start_time = time.time()
     # start new game and get json object
     game = requests.get(web_base.format(action="new_game")).json()
     # get game id
     game_id = game["gameId"]
     while not game_over:
-        # TODO: re-write so that less GET requests are made to the server
         transactions = []
 
         # parse game data
-        planet, turns_left, market, hold, fuel_purchases, loan, cargo_bays = get_game_data(
-            game
-        )
+        (
+            planet,
+            game_credits,
+            turns_left,
+            market,
+            hold,
+            fuel_purchases,
+            loan,
+            cargo_bays,
+            cargo_bays_used,
+        ) = get_game_data(game)
 
         # check for low cargo event
         low_cargo = is_low_market_event(market)
 
         # sell all cargo
-        sell_cargo(game_id, game["gameState"]["currentHold"])
-        transactions.append("Selling all cargo")
-
-        # update credits
-        game_credits = get_game_variable(game_id, "credits")
+        sell_profit = sell_cargo(game_id, hold, market)
+        transactions.append(f"Cargo sale profit: {sell_profit}")
+        game_credits += sell_profit
 
         # buy fuel cells
-        if should_buy_fuel_cells(planet, turns_left, fuel_purchases):
-            transactions.append(try_buy_fuel_cells(game_id))
-            turns_left = get_game_variable(game_id, "turnsLeft")
+        # if should_buy_fuel_cells(planet, turns_left, fuel_purchases):
+        #     bought_cells, game_credits = try_buy_fuel_cells(game_id, game_credits)
+        #     if bought_cells:
+        #         transactions.append("Bought 5 more turns")
+        #         turns_left += 5
 
         # repay loan
         if should_repay_loan(planet, loan, low_cargo):
-            transactions.append(try_repay_loan(game_id, game_credits, loan))
+            game_credits, loan = try_repay_loan(game_id, game_credits, loan)
 
-        # update credits
-        game_credits = get_game_variable(game_id, "credits")
+        if loan:
+            transactions.append(f"Loan balance: {loan}")
 
         # buy cargo
         cargo_to_buy = should_buy_cargo(market, game_credits)
         if cargo_to_buy:
-            cargo_bays_used = get_game_variable(game_id, "usedBays")
-            cargo_bays = get_game_variable(game_id, "totalBays")
-            transactions.append(
-                try_buy_cargo(
+            game_credits, hold, cargo_amount_bought = try_buy_cargo(
+                game_id, cargo_to_buy, market, game_credits, cargo_bays_used, cargo_bays
+            )
+
+            # add notification
+            if cargo_amount_bought:
+                transactions.append(
+                    f"Bought {cargo_amount_bought} {cargo_to_buy} at {market[cargo_to_buy]} each"
+                )
+
+        # buy cargo bays
+        if can_buy_bays(planet, cargo_bays) and should_buy_bays(
+            turns_left, cargo_to_buy, game_credits
+        ):
+            game_credits, cargo_bays, cargo_bays_used, bays_bought = try_buy_bays(
+                game_id, game_credits, cargo_bays
+            )
+
+            # add notification
+            if bays_bought:
+                transactions.append(f"Bought {bays_bought} bays")
+
+            # bought more bays, try to buy cargo again
+            cargo_to_buy = should_buy_cargo(market, game_credits)
+            if cargo_to_buy:
+                game_credits, hold, cargo_amount_bought = try_buy_cargo(
                     game_id,
                     cargo_to_buy,
                     market,
@@ -462,41 +567,12 @@ while not end_play:
                     cargo_bays_used,
                     cargo_bays,
                 )
-            )
-            hold = get_game_variable(game_id, "currentHold")
 
-        # update credits
-        game_credits = get_game_variable(game_id, "credits")
-
-        # buy cargo bays
-        if can_buy_bays(planet, cargo_bays) and should_buy_bays(
-            turns_left, cargo_to_buy, game_credits
-        ):
-            transactions.append(try_buy_bays(game_id, game_credits, cargo_bays))
-
-            # update credits
-            game_credits = get_game_variable(game_id, "credits")
-
-            # bought more bays, try to buy cargo again
-            cargo_bays = get_game_variable(game_id, "totalBays")
-            cargo_to_buy = should_buy_cargo(market, game_credits)
-            if cargo_to_buy:
-                cargo_bays_used = get_game_variable(game_id, "usedBays")
-                cargo_bays = get_game_variable(game_id, "totalBays")
-                transactions.append(
-                    try_buy_cargo(
-                        game_id,
-                        cargo_to_buy,
-                        market,
-                        game_credits,
-                        cargo_bays_used,
-                        cargo_bays,
+                # add notification
+                if cargo_amount_bought:
+                    transactions.append(
+                        f"Bought {cargo_amount_bought} {cargo_to_buy} at {market[cargo_to_buy]} each"
                     )
-                )
-                hold = get_game_variable(game_id, "currentHold")
-
-        # update credits
-        game_credits = get_game_variable(game_id, "credits")
 
         # print data
         print("\nPlanet: ", planet)
@@ -520,7 +596,17 @@ while not end_play:
             game = try_travel(game_id, travel_planet)
         else:
             # endgame
-            sell_cargo(game_id, game["gameState"]["currentHold"])
+            sell_profit = sell_cargo(game_id, hold, market)
+
+            # calculate score
+            final_credits = game_credits + sell_profit
+            final_loan = loan
+            final_score = final_credits - final_loan
+            print(
+                f"Sold cargo for a total of {sell_profit}\nFinal score: {final_score}"
+            )
+
+            data_file.write(f"{time.time() - start_time}\n")
 
             score = requests.post(
                 "https://skysmuggler.com/scores/submit", json={"gameId": game_id}
@@ -539,9 +625,11 @@ while not end_play:
             game_count += 1
 
     # new game setup
-    if game_count >= 5:
+    if game_count >= 10:
         end_play = True
     else:
         game_over = False
+
+data_file.close()
 
 # endregion
