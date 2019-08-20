@@ -516,11 +516,11 @@ while not end_play:
         game_credits += sell_profit
 
         # buy fuel cells
-        # if should_buy_fuel_cells(planet, turns_left, fuel_purchases):
-        #     bought_cells, game_credits = try_buy_fuel_cells(game_id, game_credits)
-        #     if bought_cells:
-        #         transactions.append("Bought 5 more turns")
-        #         turns_left += 5
+        if should_buy_fuel_cells(planet, turns_left, fuel_purchases):
+            bought_cells, game_credits = try_buy_fuel_cells(game_id, game_credits)
+            if bought_cells:
+                transactions.append("Bought 5 more turns")
+                turns_left += 5
 
         # repay loan
         if should_repay_loan(planet, loan, low_cargo):
