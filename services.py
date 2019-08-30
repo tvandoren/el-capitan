@@ -1,7 +1,6 @@
 import random
 import requests
 
-# region setup
 
 # cargo price data
 AVG_CARGO_PRICES = {
@@ -25,20 +24,6 @@ MIN_CARGO_PRICES = {
 # web address base for request types
 web_base = "https://skysmuggler.com/game/{action}"
 
-# play flags
-end_play = False
-game_over = False
-
-# number of games played
-game_count = 0
-
-# data file
-data_file = open("data.txt", "a")
-
-# endregion
-
-# region game functions
-
 
 def can_buy_bays(current_planet, current_cargo_bays):
     """
@@ -47,7 +32,6 @@ def can_buy_bays(current_planet, current_cargo_bays):
     :param current_cargo_bays: number of cargo bays acquired
     :return: True if correct planet and bays can still be purchased, else False
     """
-
     return current_planet == "taspra" and current_cargo_bays < 1_000
 
 
@@ -63,7 +47,6 @@ def choose_planet(
     :param current_cargo_bays: number of cargo bays acquired
     :return: string containing chosen planet
     """
-
     planet_list = ["pertia", "earth", "taspra", "caliban", "umbriel", "setebos"]
 
     banned_cargo = {
@@ -87,19 +70,26 @@ def choose_planet(
                 pass
 
     # choose preferred planet if still in list
+    # top priority is paying off loanshark after making enough credits
     if current_loan and current_turns_left < 18 and "umbriel" in planet_list:
-        # top priority is paying off loanshark after making enough credits
         chosen_planet = "umbriel"
+    # travel to taspra to buy more bays
     elif "taspra" in planet_list and current_cargo_bays < 1_000:
-        # travel to taspra to buy more bays
         chosen_planet = "taspra"
+    # earth should be traveled to (only) later in the game in order to make bank deposits
+    elif "earth" in planet_list and 2 < current_turns_left < 15:
+        chosen_planet = "earth"
+    # pertia should be traveled to later in the game to buy more turns
     elif "pertia" in planet_list and current_turns_left < 15:
-        # pertia is a fairly safe planet to travel to later game, since metal is not as helpful
         chosen_planet = "pertia"
     else:
         # don't go to umbriel or earth accidentally (want to be able to buy weapons and narcotics)
         try:
             planet_list.remove("umbriel")
+        except ValueError:
+            pass
+
+        try:
             planet_list.remove("earth")
         except ValueError:
             pass
@@ -116,7 +106,7 @@ def get_game_data(game_object):
     Parses game state data into variables from json object
     :param game_object: a json object with game state data
     :return: tuple of current (planet, credits, turns left, market, hold,
-    fuel purchases, loan, cargo bays, cargo bays used)
+    fuel purchases, loan, cargo bays, bank balance)
     """
     current_planet = game_object["gameState"]["planet"]
     current_credits = game_object["gameState"]["credits"]
@@ -126,7 +116,7 @@ def get_game_data(game_object):
     current_fuel_purchases = game_object["gameState"]["fuelPurchases"]
     current_loan = game_object["gameState"]["loanBalance"]
     current_cargo_bays = game_object["gameState"]["totalBays"]
-    current_cargo_bays_used = game_object["gameState"]["usedBays"]
+    current_bank_balance = game_object["gameState"]["bankBalance"]
 
     return (
         current_planet,
@@ -137,7 +127,7 @@ def get_game_data(game_object):
         current_fuel_purchases,
         current_loan,
         current_cargo_bays,
-        current_cargo_bays_used,
+        current_bank_balance,
     )
 
 
@@ -147,7 +137,6 @@ def is_low_market_event(current_market):
     :param current_market: dictionary of cargo:price keys and values
     :return: cargo type if low market event, else empty string
     """
-
     for cargo_type, amount in current_market.items():
         if amount and amount < MIN_CARGO_PRICES[cargo_type]:
             return cargo_type
@@ -191,7 +180,6 @@ def should_buy_bays(current_turns_left, did_buy, current_credits):
     :param current_credits: amount of available credits
     :return: True if criteria met, otherwise False
     """
-
     return current_turns_left > 2 and did_buy and current_credits > 1_600
 
 
@@ -202,7 +190,6 @@ def should_buy_cargo(current_market, current_credits):
     :param current_credits: amount of available credits
     :return: preferred type of cargo to buy if one is found, else empty string
     """
-
     chosen_cargo = ""
     chosen_cargo_percentage = 0
 
@@ -256,8 +243,19 @@ def should_buy_fuel_cells(current_planet, current_turns_left, current_fuel_purch
     return (
         current_planet == "pertia"
         and current_turns_left < 5
-        and current_fuel_purchases < 5
+        and current_fuel_purchases < 8
     )
+
+
+def should_deposit(current_planet, did_withdraw, current_credits):
+    """
+    Checks against defined criteria for if a deposit should be made to the bank
+    :param current_planet: the name of the current planet
+    :param did_withdraw: True if a withdrawal was made on the same turn
+    :param current_credits: amount of available credits
+    :return: True if criteria met, otherwise false
+    """
+    return current_planet == "earth" and (current_credits > 2_000_000 or did_withdraw)
 
 
 def should_repay_loan(current_planet, current_loan, current_low_cargo):
@@ -270,6 +268,53 @@ def should_repay_loan(current_planet, current_loan, current_low_cargo):
     :return: True if repaying loan is deemed correct action
     """
     return current_planet == "umbriel" and current_loan > 0 and not current_low_cargo
+
+
+def try_bank_transaction(current_id, current_transaction_amount, bank_action):
+    """
+    Attempts to deposit all available credits to the bank
+    :param current_id: a string holding the current game id
+    :param current_transaction_amount: amount of credits to complete bank transaction with
+    :param bank_action: string name of bank action. Must either be "withdraw" or "deposit
+    :return: tuple of credits and bank balance
+    """
+    deposit_transaction = requests.post(
+        web_base.format(action="bank"),
+        json={
+            "gameId": current_id,
+            "transaction": {"side": bank_action, "qty": current_transaction_amount},
+        },
+    )
+
+    if deposit_transaction.status_code == 200:
+        return (
+            deposit_transaction.json()["gameState"]["credits"],
+            deposit_transaction.json()["gameState"]["bankBalance"],
+        )
+    else:
+        error_state = requests.get(
+            web_base.format(action="game_state"), params={"gameId": current_id}
+        ).json()
+        print(
+            f"""**** Bank {bank_action} error! ****
+        Tried to {bank_action} {current_transaction_amount} credits
+        **** GAME ****
+        planet: {error_state["gameState"]["planet"]}
+        credits: {error_state["gameState"]["credits"]}
+        bankBalance: {error_state["gameState"]["bankBalance"]}
+        **** HOLD ****
+        narcotics: {error_state["gameState"]["currentHold"]["narcotics"]}
+        mining: {error_state["gameState"]["currentHold"]["mining"]}
+        medical: {error_state["gameState"]["currentHold"]["medical"]}
+        metal: {error_state["gameState"]["currentHold"]["metal"]}
+        weapons: {error_state["gameState"]["currentHold"]["weapons"]}
+        water: {error_state["gameState"]["currentHold"]["water"]}
+        """
+        )
+        return (
+            error_state["gameState"]["credits"],
+            error_state["gameState"]["bankBalance"],
+        )
 
 
 def try_buy_bays(current_id, current_credits, current_cargo_bays):
@@ -308,19 +353,12 @@ def try_buy_bays(current_id, current_credits, current_cargo_bays):
         ).json()
         print(
             f"""**** Buy bays error! ****
-            Tried to buy {bays_to_buy} bays
+        Tried to buy {bays_to_buy} bays
         **** GAME ****
         planet: {error_state["gameState"]["planet"]}
         credits: {error_state["gameState"]["credits"]}
         usedBays: {error_state["gameState"]["usedBays"]}
         totalBays: {error_state["gameState"]["totalBays"]}
-        **** HOLD ****
-        narcotics: {error_state["gameState"]["currentHold"]["narcotics"]}
-        mining: {error_state["gameState"]["currentHold"]["mining"]}
-        medical: {error_state["gameState"]["currentHold"]["medical"]}
-        metal: {error_state["gameState"]["currentHold"]["metal"]}
-        weapons: {error_state["gameState"]["currentHold"]["weapons"]}
-        water: {error_state["gameState"]["currentHold"]["water"]}
         """
         )
         return (
@@ -415,6 +453,7 @@ def try_buy_fuel_cells(current_id, current_credits):
     if buy_transaction.status_code == 200:
         return True, buy_transaction.json()["gameState"]["credits"]
     else:
+        print("Not enough credits for fuel cells")
         return False, current_credits
 
 
@@ -468,8 +507,6 @@ def try_travel(current_id, chosen_planet):
         **** GAME ****
         planet: {error_state["gameState"]["planet"]}
         credits: {error_state["gameState"]["credits"]}
-        usedBays: {error_state["gameState"]["usedBays"]}
-        totalBays: {error_state["gameState"]["totalBays"]}
         **** HOLD ****
         narcotics: {error_state["gameState"]["currentHold"]["narcotics"]}
         mining: {error_state["gameState"]["currentHold"]["mining"]}
@@ -480,154 +517,3 @@ def try_travel(current_id, chosen_planet):
         """
         )
         return None
-
-
-# endregion
-
-# region play
-while not end_play:
-    print(f"Starting game {game_count + 1}")
-    # start new game and get json object
-    game = requests.get(web_base.format(action="new_game")).json()
-    # get game id
-    game_id = game["gameId"]
-    while not game_over:
-        transactions = []
-
-        # parse game data
-        (
-            planet,
-            game_credits,
-            turns_left,
-            market,
-            hold,
-            fuel_purchases,
-            loan,
-            cargo_bays,
-            cargo_bays_used,
-        ) = get_game_data(game)
-
-        # check for low cargo event
-        low_cargo = is_low_market_event(market)
-
-        # sell all cargo
-        sell_profit = sell_cargo(game_id, hold, market)
-        transactions.append(f"Cargo sale profit: {sell_profit}")
-        game_credits += sell_profit
-
-        # buy fuel cells
-        if should_buy_fuel_cells(planet, turns_left, fuel_purchases):
-            bought_cells, game_credits = try_buy_fuel_cells(game_id, game_credits)
-            if bought_cells:
-                transactions.append("Bought 5 more turns")
-                turns_left += 5
-
-        # repay loan
-        if should_repay_loan(planet, loan, low_cargo):
-            game_credits, loan = try_repay_loan(game_id, game_credits, loan)
-
-        if loan:
-            transactions.append(f"Loan balance: {loan}")
-
-        # buy cargo
-        cargo_to_buy = should_buy_cargo(market, game_credits)
-        if cargo_to_buy:
-            game_credits, hold, cargo_amount_bought = try_buy_cargo(
-                game_id, cargo_to_buy, market, game_credits, cargo_bays_used, cargo_bays
-            )
-
-            # add notification
-            if cargo_amount_bought:
-                transactions.append(
-                    f"Bought {cargo_amount_bought} {cargo_to_buy} at {market[cargo_to_buy]} each"
-                )
-
-        # buy cargo bays
-        if can_buy_bays(planet, cargo_bays) and should_buy_bays(
-            turns_left, cargo_to_buy, game_credits
-        ):
-            game_credits, cargo_bays, cargo_bays_used, bays_bought = try_buy_bays(
-                game_id, game_credits, cargo_bays
-            )
-
-            # add notification
-            if bays_bought:
-                transactions.append(f"Bought {bays_bought} bays")
-
-            # bought more bays, try to buy cargo again
-            cargo_to_buy = should_buy_cargo(market, game_credits)
-            if cargo_to_buy:
-                game_credits, hold, cargo_amount_bought = try_buy_cargo(
-                    game_id,
-                    cargo_to_buy,
-                    market,
-                    game_credits,
-                    cargo_bays_used,
-                    cargo_bays,
-                )
-
-                # add notification
-                if cargo_amount_bought:
-                    transactions.append(
-                        f"Bought {cargo_amount_bought} {cargo_to_buy} at {market[cargo_to_buy]} each"
-                    )
-
-        # print data
-        print("\nPlanet: ", planet)
-        print("Turns: ", turns_left, "\tCredits: ", game_credits)
-
-        for item in transactions:
-            print(item)
-
-        # uncomment for market and hold data
-        # print("\nCargo:".ljust(15), "Market price:".ljust(15), "In hold:")
-        # for cargo, price in market.items():
-        #     in_hold = "-" if hold[cargo] == "0" else hold[cargo]
-        #     print(f"{cargo}:".ljust(15), f"{price}".ljust(15), in_hold)
-
-        print("\n")
-
-        # endgame/travel
-        if turns_left > 1:
-            # travel
-            travel_planet = choose_planet(planet, hold, loan, turns_left, cargo_bays)
-            game = try_travel(game_id, travel_planet)
-        else:
-            # endgame
-            sell_profit = sell_cargo(game_id, hold, market)
-
-            # calculate score
-            final_credits = game_credits + sell_profit
-            final_loan = loan
-            final_score = final_credits - final_loan
-            print(
-                f"Sold cargo for a total of {sell_profit}\nFinal score: {final_score}"
-            )
-
-            data_file.write(f"{final_score}\n")
-
-            score = requests.post(
-                "https://skysmuggler.com/scores/submit", json={"gameId": game_id}
-            )
-
-            if score.status_code == 200 and "New" in score.json()["message"]:
-                requests.post(
-                    "https://skysmuggler.com/scores/update_name",
-                    json={"newName": "El Capitan", "gameId": game_id},
-                )
-                print("***** High score achieved *****")
-            else:
-                print("***** End of game *****")
-
-            game_over = True
-            game_count += 1
-
-    # new game setup
-    if game_count >= 10:
-        end_play = True
-    else:
-        game_over = False
-
-data_file.close()
-
-# endregion
