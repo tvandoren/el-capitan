@@ -77,7 +77,7 @@ def choose_planet(
     elif "taspra" in planet_list and current_cargo_bays < 1_000:
         chosen_planet = "taspra"
     # earth should be traveled to (only) later in the game in order to make bank deposits
-    elif "earth" in planet_list and 2 < current_turns_left < 15:
+    elif "earth" in planet_list and 2 < current_turns_left < 16:
         chosen_planet = "earth"
     # pertia should be traveled to later in the game to buy more turns
     elif "pertia" in planet_list and current_turns_left < 15:
@@ -255,7 +255,7 @@ def should_deposit(current_planet, did_withdraw, current_credits):
     :param current_credits: amount of available credits
     :return: True if criteria met, otherwise false
     """
-    return current_planet == "earth" and (current_credits > 2_000_000 or did_withdraw)
+    return current_planet == "earth" and (current_credits > 500_000 or did_withdraw)
 
 
 def should_repay_loan(current_planet, current_loan, current_low_cargo):
@@ -296,7 +296,8 @@ def try_bank_transaction(current_id, current_transaction_amount, bank_action):
             web_base.format(action="game_state"), params={"gameId": current_id}
         ).json()
         print(
-            f"""**** Bank {bank_action} error! ****
+            f"""
+        **** Bank {bank_action} error! ****
         Tried to {bank_action} {current_transaction_amount} credits
         **** GAME ****
         planet: {error_state["gameState"]["planet"]}
@@ -352,7 +353,8 @@ def try_buy_bays(current_id, current_credits, current_cargo_bays):
             web_base.format(action="game_state"), params={"gameId": current_id}
         ).json()
         print(
-            f"""**** Buy bays error! ****
+            f"""
+        **** Buy bays error! ****
         Tried to buy {bays_to_buy} bays
         **** GAME ****
         planet: {error_state["gameState"]["planet"]}
@@ -415,7 +417,8 @@ def try_buy_cargo(
             web_base.format(action="game_state"), params={"gameId": current_id}
         ).json()
         print(
-            f"""**** Buy cargo error! ****
+            f"""
+        **** Buy cargo error! ****
         Tried to buy {cargo_amount} {chosen_cargo} at {current_market[chosen_cargo]}
         **** GAME ****
         planet: {error_state["gameState"]["planet"]}
@@ -502,7 +505,8 @@ def try_travel(current_id, chosen_planet):
             web_base.format(action="game_state"), params={"gameId": current_id}
         ).json()
         print(
-            f"""**** Travel error! ****
+            f"""
+        **** Travel error! ****
         Tried to travel to {chosen_planet}
         **** GAME ****
         planet: {error_state["gameState"]["planet"]}

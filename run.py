@@ -70,7 +70,7 @@ while not end_play:
             game_credits, bank_balance = services.try_bank_transaction(
                 game_id, bank_balance, "withdraw"
             )
-            bank_withdrawal = True
+            bank_withdrawal = not bank_balance
 
         # buy cargo
         cargo_to_buy = services.should_buy_cargo(market, game_credits)
@@ -170,9 +170,9 @@ while not end_play:
                     "https://skysmuggler.com/scores/update_name",
                     json={"newName": "El Capitan", "gameId": game_id},
                 )
-                print("***** High score achieved *****")
+                print("***** High score achieved *****\n")
             else:
-                print("***** End of game *****")
+                print("***** End of game *****\n")
 
             game_over = True
             game_count += 1
