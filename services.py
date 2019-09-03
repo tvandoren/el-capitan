@@ -35,6 +35,43 @@ def can_buy_bays(current_planet, current_cargo_bays):
     return current_planet == "taspra" and current_cargo_bays < 1_000
 
 
+def choose_cargo_to_buy(
+    current_market, current_credits, current_bays_used, current_cargo_bays
+):
+    """
+    Checks against user-defined criteria to choose a cargo to buy (none if no good choice)
+    :param current_market: dictionary of cargo:price keys and values
+    :param current_credits: amount of available credits
+    :param current_bays_used: number of cargo bays in use
+    :param current_cargo_bays: number of cargo bays acquired
+    :return: preferred type of cargo to buy if one is found, else empty string
+    """
+    chosen_cargo = ""
+    chosen_cargo_profit = 0
+
+    bays_available = current_cargo_bays - current_bays_used
+
+    for cargo_type, current_price in current_market.items():
+        if current_price:
+            # find potential profit based on average prices
+            potential_cargo_amount = current_credits // current_market[cargo_type]
+            per_item_profit = AVG_CARGO_PRICES[cargo_type] - current_price
+            cargo_amount = (
+                potential_cargo_amount
+                if potential_cargo_amount <= bays_available
+                else bays_available
+            )
+
+            potential_cargo_profit = cargo_amount * per_item_profit
+
+            # compare to previous highest profit, replace cargo if necessary
+            if potential_cargo_profit > chosen_cargo_profit:
+                chosen_cargo = cargo_type
+                chosen_cargo_profit = potential_cargo_profit
+
+    return chosen_cargo
+
+
 def choose_planet(
     current_planet, current_hold, current_loan, current_turns_left, current_cargo_bays
 ):
@@ -181,54 +218,6 @@ def should_buy_bays(current_turns_left, did_buy, current_credits):
     :return: True if criteria met, otherwise False
     """
     return current_turns_left > 2 and did_buy and current_credits > 1_600
-
-
-def should_buy_cargo(current_market, current_credits):
-    """
-    Checks against user-define criteria for if buying any cargo type is a good choice
-    :param current_market: dictionary of cargo:price keys and values
-    :param current_credits: amount of available credits
-    :return: preferred type of cargo to buy if one is found, else empty string
-    """
-    chosen_cargo = ""
-    chosen_cargo_percentage = 0
-
-    # expense percentage rate
-    acceptable_percentage = 0.09
-
-    # cargo weight used to determine preferred cargo
-    cargo_weight = {
-        "mining": 0.90,
-        "medical": 0.95,
-        "narcotics": 0.95,
-        "weapons": 1.0,
-        "water": 0.75,
-        "metal": 0.35,
-        "": 1.0,
-    }
-
-    # keep track of cheapest cargo by percentage
-    for cargo_type, current_price in current_market.items():
-        try:
-            # find percentage that cargo is over/under average
-            percentage_under = (
-                AVG_CARGO_PRICES[cargo_type] - current_price
-            ) / AVG_CARGO_PRICES[cargo_type]
-
-            # cargo is cheap enough, is affordable, and more preferable than previous cargo
-            if (
-                percentage_under > acceptable_percentage
-                and current_price < current_credits
-                and percentage_under * cargo_weight[cargo_type]
-                > chosen_cargo_percentage * cargo_weight[chosen_cargo]
-            ):
-                chosen_cargo = cargo_type
-                chosen_cargo_percentage = percentage_under
-        except TypeError:
-            # cargo not available on planet
-            pass
-
-    return chosen_cargo
 
 
 def should_buy_fuel_cells(
