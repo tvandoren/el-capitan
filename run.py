@@ -73,7 +73,9 @@ while not end_play:
             bank_withdrawal = not bank_balance
 
         # buy cargo
-        cargo_to_buy = services.should_buy_cargo(market, game_credits)
+        cargo_to_buy = services.choose_cargo_to_buy(
+            market, game_credits, cargo_bays_used, cargo_bays
+        )
         if cargo_to_buy:
             game_credits, hold, cargo_amount_bought = services.try_buy_cargo(
                 game_id, cargo_to_buy, market, game_credits, cargo_bays_used, cargo_bays
@@ -109,7 +111,9 @@ while not end_play:
                 transactions.append(f"Bought {bays_bought} bays")
 
             # bought more bays, try to buy cargo again
-            cargo_to_buy = services.should_buy_cargo(market, game_credits)
+            cargo_to_buy = services.choose_cargo_to_buy(
+                market, game_credits, cargo_bays_used, cargo_bays
+            )
             if cargo_to_buy:
                 game_credits, hold, cargo_amount_bought = services.try_buy_cargo(
                     game_id,
@@ -134,10 +138,10 @@ while not end_play:
             print(item)
 
         # uncomment for market and hold data
-        # print("\nCargo:".ljust(15), "Market price:".ljust(15), "In hold:")
-        # for cargo, price in market.items():
-        #     in_hold = "-" if hold[cargo] == "0" else hold[cargo]
-        #     print(f"{cargo}:".ljust(15), f"{price}".ljust(15), in_hold)
+        print("\nCargo:".ljust(15), "Market price:".ljust(15), "In hold:")
+        for cargo, price in market.items():
+            in_hold = "-" if hold[cargo] == "0" else hold[cargo]
+            print(f"{cargo}:".ljust(15), f"{price}".ljust(15), in_hold)
 
         print("\n")
 
@@ -178,7 +182,7 @@ while not end_play:
             game_count += 1
 
     # new game setup
-    if game_count >= 1:
+    if game_count >= 100:
         end_play = True
     else:
         game_over = False
