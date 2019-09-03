@@ -231,19 +231,24 @@ def should_buy_cargo(current_market, current_credits):
     return chosen_cargo
 
 
-def should_buy_fuel_cells(current_planet, current_turns_left, current_fuel_purchases):
+def should_buy_fuel_cells(
+    current_planet, current_turns_left, current_fuel_purchases, current_credits
+):
     """
     Checks against user-defined criteria for if buying more fuel cells is a good choice
     :param current_planet: the name of the current planet
     :param current_turns_left: the number of turns left in the game
     :param current_fuel_purchases: total number of times fuel cells have been purchased
+    :param current_credits: number of available credits
     :return: True if buying fuel cells is deemed correct action
     """
     # TODO: come up with better algorithm for deciding to buy fuel cells
+    fuel_cell_cost = 50_000 + 50_000 * current_fuel_purchases ** 3
+
     return (
         current_planet == "pertia"
         and current_turns_left < 5
-        and current_fuel_purchases < 8
+        and fuel_cell_cost < current_credits
     )
 
 
@@ -252,7 +257,7 @@ def should_deposit(current_planet, did_withdraw, current_credits):
     Checks against defined criteria for if a deposit should be made to the bank
     :param current_planet: the name of the current planet
     :param did_withdraw: True if a withdrawal was made on the same turn
-    :param current_credits: amount of available credits
+    :param current_credits: number of available credits
     :return: True if criteria met, otherwise false
     """
     return current_planet == "earth" and (current_credits > 500_000 or did_withdraw)
