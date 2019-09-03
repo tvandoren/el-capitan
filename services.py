@@ -56,11 +56,7 @@ def choose_cargo_to_buy(
             # find potential profit based on average prices
             potential_cargo_amount = current_credits // current_market[cargo_type]
             per_item_profit = AVG_CARGO_PRICES[cargo_type] - current_price
-            cargo_amount = (
-                potential_cargo_amount
-                if potential_cargo_amount <= bays_available
-                else bays_available
-            )
+            cargo_amount = min(potential_cargo_amount, bays_available)
 
             potential_cargo_profit = cargo_amount * per_item_profit
 
@@ -220,24 +216,19 @@ def should_buy_bays(current_turns_left, did_buy, current_credits):
     return current_turns_left > 2 and did_buy and current_credits > 1_600
 
 
-def should_buy_fuel_cells(
-    current_planet, current_turns_left, current_fuel_purchases, current_credits
-):
+def should_buy_fuel_cells(current_planet, current_turns_left, current_fuel_purchases):
     """
     Checks against user-defined criteria for if buying more fuel cells is a good choice
     :param current_planet: the name of the current planet
     :param current_turns_left: the number of turns left in the game
     :param current_fuel_purchases: total number of times fuel cells have been purchased
-    :param current_credits: number of available credits
     :return: True if buying fuel cells is deemed correct action
     """
     # TODO: come up with better algorithm for deciding to buy fuel cells
-    fuel_cell_cost = 50_000 + 50_000 * current_fuel_purchases ** 3
-
     return (
         current_planet == "pertia"
         and current_turns_left < 5
-        and fuel_cell_cost < current_credits
+        and current_fuel_purchases < 11
     )
 
 
@@ -386,11 +377,7 @@ def try_buy_cargo(
     potential_cargo_amount = current_credits // current_market[chosen_cargo]
     bays_available = current_cargo_bays - current_bays_used
 
-    cargo_amount = (
-        potential_cargo_amount
-        if potential_cargo_amount <= bays_available
-        else bays_available
-    )
+    cargo_amount = min(potential_cargo_amount, bays_available)
 
     buy_transaction = requests.post(
         web_base.format(action="trade"),

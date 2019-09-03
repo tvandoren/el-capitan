@@ -137,11 +137,11 @@ while not end_play:
         for item in transactions:
             print(item)
 
-        # uncomment for market and hold data
-        print("\nCargo:".ljust(15), "Market price:".ljust(15), "In hold:")
-        for cargo, price in market.items():
-            in_hold = "-" if hold[cargo] == "0" else hold[cargo]
-            print(f"{cargo}:".ljust(15), f"{price}".ljust(15), in_hold)
+        # # uncomment for market and hold data
+        # print("\nCargo:".ljust(15), "Market price:".ljust(15), "In hold:")
+        # for cargo, price in market.items():
+        #     in_hold = "-" if hold[cargo] == "0" else hold[cargo]
+        #     print(f"{cargo}:".ljust(15), f"{price}".ljust(15), in_hold)
 
         print("\n")
 
@@ -182,7 +182,7 @@ while not end_play:
             game_count += 1
 
     # new game setup
-    if game_count >= 100:
+    if game_count >= 1:
         end_play = True
     else:
         game_over = False
